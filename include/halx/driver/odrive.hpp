@@ -24,13 +24,13 @@ namespace halx::driver
 
 class Odrive
 {
-private:
-    typedef enum{
-        Odrive_mode_DISABLE = 0,    // axis_state_t::IDLE
-        Odrive_mode_TORQUE = 1,     // TORQUE_CONTROL, PASSTHROUGH
-        Odrive_mode_VELOCITY = 2,   // VELOCITY_CONTROL, PASSTHROUGH
-        Odrive_mode_POSITION = 3    // POSITION_CONTROL, TRAP_TRAJ
-    } Mode;
+public:
+    enum class Mode : uint8_t {
+        DISABLE = 0,    // axis_state_t::IDLE
+        TORQUE = 1,     // TORQUE_CONTROL, PASSTHROUGH
+        VELOCITY = 2,   // VELOCITY_CONTROL, PASSTHROUGH
+        POSITION = 3    // POSITION_CONTROL, TRAP_TRAJ
+    };
 
     enum class ControlMode : uint32_t {
         VOLTAGE_CONTROL,
@@ -118,7 +118,7 @@ private:
 private:
     struct Params {
         // heartbeat msg
-        AxisError axis_error;
+        uint32_t axis_error;
         AxisState axis_state;
         bool motor_error_flag;
         bool encoder_error_flag;
@@ -148,7 +148,8 @@ private:
 public:
     Odrive(peripheral::CanBase &can, uint8_t node_id, Mode mode = Mode::DISABLE, uint32_t timeout = 1000) : can_(can), node_id_(node_id), mode_(mode), timeout_(timeout)
     {
-        auto filter_index = can_.attach_rx_queue({node_id_ << 5, 0x3F << 5, false}, rx_queue_);
+        auto filter_index = can_.attach_rx_queue({(uint32_t)(node_id_ << 5), (uint32_t)(0x3F << 5), false}, rx_queue_);
+        // auto filter_index = can_.attach_rx_queue({0, 0, false}, rx_queue_);
         if (!filter_index) {
         std::terminate();
         }
@@ -168,7 +169,7 @@ public:
             case cmd_t::s2m_heart_beat:
                 if(msg->dlc == 8)
                 {
-                    params_.axis_error = (AxisError)(msg->data[0] | (msg->data[1] << 8) | (msg->data[2] << 16) | (msg->data[3] << 24));
+                    params_.axis_error = (uint32_t)(msg->data[0] | (msg->data[1] << 8) | (msg->data[2] << 16) | (msg->data[3] << 24));
                     params_.axis_state = (AxisState)msg->data[4];
                     params_.motor_error_flag = msg->data[5] & 0b00000001;
                     params_.encoder_error_flag = msg->data[6] & 0b00000001;
@@ -186,7 +187,7 @@ public:
                         {
                             // if axis_state is not CLOSED_LOOP_CONTROL, make it CLOSED_LOOP_CONTROL
                             peripheral::CanMessage msg{};
-                            msg.id = (node_id_ << 5) | cmd_t::m2s_set_axis_state;
+                            msg.id = (node_id_ << 5) | (uint32_t)cmd_t::m2s_set_axis_state;
                             msg.ide = false;
                             msg.dlc = 4;
                             uint32_t tx_data = (uint32_t)AxisState::CLOSED_LOOP_CONTROL;
@@ -197,7 +198,7 @@ public:
                         {
                             // if axis_state is not IDLE, make it IDLE
                             peripheral::CanMessage msg{};
-                            msg.id = (node_id_ << 5) | cmd_t::m2s_set_axis_state;
+                            msg.id = (node_id_ << 5) | (uint32_t)cmd_t::m2s_set_axis_state;
                             msg.ide = false;
                             msg.dlc = 4;
                             uint32_t tx_data = (uint32_t)AxisState::IDLE;
@@ -229,6 +230,7 @@ public:
         } else {
             return false;
         }
+        return true;
     }
 
     std::optional<float> get_pos_estimate() {
@@ -253,43 +255,54 @@ public:
         return params_.vel_estimate;
     }
 
+    bool get_trajectory_done() {
+        if (params_.last_update_heartbeat_){
+            if (static_cast<uint32_t>(core::get_tick() - *params_.last_update_heartbeat_) >= timeout_) {
+                return false;
+            }
+        } else {
+            return false;
+        }
+        return params_.trajectory_done_flag;
+    }
+
     bool set_mode(Mode mode) {
         mode_ = mode;
         if(!connected()) return false;
-        control_mode_t control_mode;
-        input_mode_t input_mode;
+        ControlMode control_mode;
+        InputMode input_mode;
         switch (mode_)
         {
-        case Odrive_mode_TORQUE:
-            control_mode = control_mode_t::TORQUE_CONTROL;
-            input_mode = input_mode_t::PASSTHROUGH;
+        case Mode::TORQUE:
+            control_mode = ControlMode::TORQUE_CONTROL;
+            input_mode = InputMode::PASSTHROUGH;
             break;
-        case Odrive_mode_VELOCITY:
-            control_mode = control_mode_t::VELOCITY_CONTROL;
-            input_mode = input_mode_t::PASSTHROUGH;
+        case Mode::VELOCITY:
+            control_mode = ControlMode::VELOCITY_CONTROL;
+            input_mode = InputMode::PASSTHROUGH;
             break;
-        case Odrive_mode_POSITION:
-            control_mode = control_mode_t::POSITION_CONTROL;
-            input_mode = input_mode_t::TRAP_TRAJ;
+        case Mode::POSITION:
+            control_mode = ControlMode::POSITION_CONTROL;
+            input_mode = InputMode::TRAP_TRAJ;
             break;
         default:
-        case Odrive_mode_DISABLE:
-            control_mode = control_mode_t::TORQUE_CONTROL;
-            input_mode = input_mode_t::INACTIVE;
+        case Mode::DISABLE:
+            control_mode = ControlMode::TORQUE_CONTROL;
+            input_mode = InputMode::INACTIVE;
             break;
         }
         peripheral::CanMessage msg{};
-        msg.id = (node_id_ << 5) | cmd_t::m2s_controller_modes;
+        msg.id = (node_id_ << 5) | (uint32_t)cmd_t::m2s_controller_modes;
         msg.ide = false;
         msg.dlc = 8;
-        std::memcpy(&msg.data[0], &control_mode, sizeof(control_mode_t));
-        std::memcpy(&msg.data[4], &input_mode, sizeof(input_mode_t));
+        std::memcpy(&msg.data[0], &control_mode, sizeof(ControlMode));
+        std::memcpy(&msg.data[4], &input_mode, sizeof(InputMode));
         return can_.transmit(msg, 5);
     }
 
     bool set_input_pos(InputPos input) {
         peripheral::CanMessage msg{};
-        msg.id = (node_id_ << 5) | cmd_t::m2s_set_input_pos;
+        msg.id = (node_id_ << 5) | (uint32_t)cmd_t::m2s_set_input_pos;
         msg.ide = false;
         msg.dlc = 8;
         int16_t vel_raw = (int16_t)(input.vel_ref * 1000.0f);
@@ -297,6 +310,16 @@ public:
         std::memcpy(&msg.data[0], &input.pos_ref, sizeof(float));
         std::memcpy(&msg.data[4], &vel_raw, sizeof(int16_t));
         std::memcpy(&msg.data[6], &torque_raw, sizeof(int16_t));
+        return can_.transmit(msg, 5);
+    }
+
+    bool set_limits(float vel_limit, float current_limit) {
+        peripheral::CanMessage msg{};
+        msg.id = (node_id_ << 5) | (uint32_t)cmd_t::m2s_set_limits;
+        msg.ide = false;
+        msg.dlc = 8;
+        std::memcpy(&msg.data[0], &vel_limit, sizeof(float));
+        std::memcpy(&msg.data[4], &current_limit, sizeof(float));
         return can_.transmit(msg, 5);
     }
 };
