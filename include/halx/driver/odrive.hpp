@@ -322,6 +322,34 @@ public:
         std::memcpy(&msg.data[4], &current_limit, sizeof(float));
         return can_.transmit(msg, 5);
     }
+
+    bool set_traj_vel_limit(float vel_limit) {
+        peripheral::CanMessage msg{};
+        msg.id = (node_id_ << 5) | (uint32_t)cmd_t::m2s_set_traj_vel_limit;
+        msg.ide = false;
+        msg.dlc = 4;
+        std::memcpy(&msg.data[0], &vel_limit, sizeof(float));
+        return can_.transmit(msg, 5);
+    }
+
+    bool set_traj_accel_limit(float accel_limit, float decel_limit) {
+        peripheral::CanMessage msg{};
+        msg.id = (node_id_ << 5) | (uint32_t)cmd_t::m2s_set_traj_accel_limit;
+        msg.ide = false;
+        msg.dlc = 8;
+        std::memcpy(&msg.data[0], &accel_limit, sizeof(float));
+        std::memcpy(&msg.data[4], &decel_limit, sizeof(float));
+        return can_.transmit(msg, 5);
+    }
+
+    bool set_traj_inertia(float inertia) {
+        peripheral::CanMessage msg{};
+        msg.id = (node_id_ << 5) | (uint32_t)cmd_t::m2s_set_traj_inertia;
+        msg.ide = false;
+        msg.dlc = 4;
+        std::memcpy(&msg.data[0], &inertia, sizeof(float));
+        return can_.transmit(msg, 5);
+    }
 };
 
 }
